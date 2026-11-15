@@ -1,152 +1,171 @@
-# SplitGo — MVP, Etapas 1 e 2
+# SplitGo
 
-API Node.js 24 + Express 5, validação Zod e PostgreSQL via driver `pg`. O domínio financeiro usa TypeScript sem dependências e roda com a remoção nativa de tipos do Node 24. Recibos e frontend ficam para as próximas etapas.
+Gestão de gastos compartilhados (repúblicas, casais, viagens, churrascos).
 
-## Continuar em outro computador
+## Estrutura
 
-Com Git e Node.js 24 ou superior instalados, autentique-se no GitHub com a conta SOZARADRION e execute:
+```
+backend/            API (Fastify + TypeScript + Drizzle + PostgreSQL)
+  src/domain/       regras puras: dinheiro, divisão, saldos, simplificação de dívidas
+  src/services/     regras de negócio + acesso ao banco (auth, grupos, despesas, saldos)
+  src/auth/         plugin JWT + middlewares authenticate / requireGroupMember
+  src/routes/       rotas HTTP e validação (Zod)
+  src/db/           schema e conexão
+  drizzle/          migrações SQL geradas
+  test/             testes de domínio, autenticação e API
+mobile/             App (Expo SDK 58 + Expo Router), Android, iOS e web
+  src/app/          telas (cada arquivo é uma rota)
+  src/auth/         sessão (contexto) e validação dos formulários
+  src/lib/          cliente da API, armazenamento seguro, tema
+```
+
+## Rodando
+
+Requer Node 22+.
+
+### Backend
+
+Não precisa instalar PostgreSQL: sem `DATABASE_URL`, a API usa **PGlite**
+(PostgreSQL embutido), com os dados em `backend/data/pglite`.
+
+```bash
+cd backend
+npm install
+npm run dev        # http://localhost:3333
+npm test           # testes (banco em memória)
+npm run typecheck
+```
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `PORT` / `HOST` | `3333` / `0.0.0.0` | endereço da API |
+| `DATABASE_URL` | (vazio → PGlite) | PostgreSQL real, ex.: `postgres://user:pass@localhost:5432/splitgo` |
+| `PGLITE_DIR` | `./data/pglite` | pasta do banco embutido |
+| `JWT_SECRET` | segredo de dev | **obrigatório em produção** (`NODE_ENV=production`), ≥ 32 caracteres |
+| `JWT_EXPIRES_IN` | `7d` | validade do token |
+| `BCRYPT_ROUNDS` | `12` | custo do hash de senha |
+| `AUTH_RATE_LIMIT` | `10` | tentativas de login/cadastro por IP por minuto |
+
+Para usar um PostgreSQL de verdade com Docker (na raiz do repositório):
+
+```powershell
+docker compose up -d --wait
+$env:DATABASE_URL = "postgresql://splitgo:splitgo@localhost:5432/splitgo"
+cd backend; npm run dev
+```
+
+As variáveis também podem ficar em `backend/.env` (modelo em `backend/.env.example`).
+
+Após alterar `src/db/schema.ts`: `npm run db:generate` (as migrações rodam
+automaticamente ao iniciar).
+
+### Continuar em outro computador
 
 ```powershell
 git clone https://github.com/SOZARADRION/SplitGo.git
-cd SplitGo
-npm ci
-npm test
-$env:SPLITGO_STORAGE = 'memory'
-npm start
+cd SplitGo/backend; npm ci; npm test
+cd ../mobile; npm ci
 ```
 
-Abra a pasta clonada no Codex para continuar o desenvolvimento. As Etapas 1 e 2 estão implementadas; a próxima etapa planejada é o leitor de recibos, seguida pelo frontend. O código e as instruções estão versionados; dados locais, `.env` e dependências não são enviados ao GitHub.
+Antes de trocar de computador: `git add . ; git commit -m "..." ; git push`.
+No outro: `git pull --ff-only`.
 
-Antes de trabalhar em outro computador, salve e envie suas alterações:
+### App
 
-```powershell
-git add .
-git commit -m "Descreva as alterações"
-git push
+```bash
+cd mobile
+npm install
+npm run web        # navegador
+npm start          # QR code para o Expo Go (celular na mesma rede Wi-Fi)
+npm run typecheck && npm run lint
 ```
 
-No outro computador, execute `git pull --ff-only` antes de começar, com a cópia local sem alterações pendentes.
+Por padrão o app chama a API no mesmo host do servidor do Expo, porta 3333.
+Para outra URL: `EXPO_PUBLIC_API_URL=https://api.exemplo.com npm start`.
 
-## Executar
+## Convenções
 
-```powershell
-npm ci
-$env:SPLITGO_STORAGE = 'memory'
-npm start
-```
+- Todo valor monetário é **inteiro em centavos** (`amountCents`).
+- Saldo não é armazenado: é calculado a partir de despesas e acertos.
+- Saldo > 0: tem a receber · saldo < 0: deve.
 
-API: `http://127.0.0.1:3001`. Memória é um modo de demonstração: os dados são perdidos ao reiniciar. Não requer banco.
+## Autenticação
 
-Para persistência PostgreSQL, com Docker instalado:
+- Senhas com **bcrypt** (custo 12), limitadas a 72 bytes (limite do bcrypt).
+- Login devolve um **JWT** (HS256), enviado como `Authorization: Bearer <token>`.
+- Login com e-mail inexistente ou senha errada dá a mesma resposta (não revela contas).
+- Login e cadastro têm limite de tentativas por IP (429 ao exceder).
+- Quem cria um grupo entra nele automaticamente. Participantes adicionados por
+  e-mail são vinculados à conta com esse e-mail, agora ou quando ela for criada.
+- Só participantes acessam um grupo. Para os demais, a API responde 404.
+- No app, o token fica no **SecureStore** (Keychain/Keystore) no celular e no
+  `localStorage` na web.
 
-```powershell
-Copy-Item .env.example .env
-docker compose up -d --wait
-Remove-Item Env:SPLITGO_STORAGE -ErrorAction SilentlyContinue
-npm run db:deploy
-npm start
-```
+## API
 
-Também é possível usar PostgreSQL 17 existente, configurando DATABASE_URL no `.env`. A migration é transacional, verifica checksum e pode ser executada novamente. `npm run dev` ativa recarga automática. PORT e HOST são configuráveis; o padrão é 127.0.0.1:3001.
+Todas as rotas ficam sob `/api`, exceto `/health`. 🔒 = exige token; 👥 = exige ser participante do grupo.
 
-Não há autenticação nesta etapa: qualquer cliente com acesso ao servidor pode consultar e alterar grupos. Uso atual para desenvolvimento local; autenticação e autorização são necessárias antes de disponibilização pública.
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/health` | status |
+| POST | `/api/auth/register` | cadastro `{ name, email, password }` → `{ token, user }` |
+| POST | `/api/auth/login` | login `{ email, password }` → `{ token, user }` |
+| GET | `/api/auth/me` 🔒 | usuário logado |
+| GET | `/api/groups` 🔒 | meus grupos (com `memberCount`) |
+| POST | `/api/groups` 🔒 | cria grupo `{ name, currency?, members: [{ name, email? }] }` |
+| GET | `/api/groups/:groupId` 🔒👥 | grupo + participantes |
+| POST | `/api/groups/:groupId/members` 🔒👥 | adiciona participante `{ name, email? }` |
+| POST | `/api/groups/:groupId/expenses` 🔒👥 | lança despesa (ver abaixo) |
+| GET | `/api/groups/:groupId/expenses` 🔒👥 | lista despesas com as partes |
+| DELETE | `/api/groups/:groupId/expenses/:expenseId` 🔒👥 | exclui (soft delete) |
+| POST | `/api/groups/:groupId/settlements` 🔒👥 | registra pagamento `{ fromMemberId, toMemberId, amountCents }` |
+| GET | `/api/groups/:groupId/summary` 🔒👥 | extrato: saldos + transferências simplificadas |
 
-## Rotas
-
-| Método | Rota | Resultado |
-| --- | --- | --- |
-| GET | /health | Estado do processo SplitGo, sem verificar banco |
-| POST | /groups | Cria grupo BRL com 1 a 100 participantes |
-| GET | /groups/:groupId | Grupo, participantes e despesas com cotas |
-| POST | /groups/:groupId/members | Adiciona participante por nome/e-mail |
-| POST | /groups/:groupId/expenses | Registra despesa com rateio EQUAL ou CUSTOM |
-| GET | /groups/:groupId/summary | Totais individuais, saldos e transferências simplificadas |
-
-Usar `Content-Type: application/json`. IDs são UUIDs retornados pela API. Valores são strings de centavos inteiros nas requisições e respostas: `"12000"` representa R$ 120,00. Não usar ponto flutuante para dinheiro.
-
-Criar grupo (`POST /groups`):
+### Lançar despesa
 
 ```json
 {
-  "name": "Viagem de férias",
-  "members": [{ "name": "Ana", "email": "ana@example.com" }, { "name": "Bruno" }, { "name": "Carla" }]
+  "description": "Mercado",
+  "amountCents": 45690,
+  "paidByMemberId": "<uuid>",
+  "occurredAt": "2026-11-15T12:00:00Z",
+  "split": { "type": "EQUAL", "memberIds": ["<uuid>", "<uuid>"] }
 }
 ```
 
-Adicionar participante (`POST /groups/:groupId/members`):
+Tipos de `split`:
 
-```json
-{ "name": "Daniel", "email": "daniel@example.com" }
-```
+- `EQUAL`: `{ memberIds }`. O resto dos centavos vai para os primeiros da lista.
+- `EXACT`: `{ shares: [{ memberId, amountCents }] }`. A soma deve fechar com o total.
+- `PERCENT`: `{ shares: [{ memberId, percent }] }`. Até 2 casas decimais, soma 100.
+- `SHARES`: `{ shares: [{ memberId, weight }] }`. Pesos inteiros (ex.: casal = 2).
 
-Divisão igual (`POST /groups/:groupId/expenses`). Substituir os identificadores abaixo pelos UUIDs retornados:
+### Erros
 
-```json
-{
-  "description": "Jantar",
-  "totalCents": "12000",
-  "payerId": "UUID_ANA",
-  "splitMode": "EQUAL",
-  "memberIds": ["UUID_ANA", "UUID_BRUNO", "UUID_CARLA"]
-}
-```
+O corpo do erro é sempre `{ "error": "CODIGO", "message": "..." }`.
 
-Divisão personalizada, na mesma rota:
+| Status | Códigos |
+|---|---|
+| 400 | `VALIDATION_ERROR` (com `issues`), `INVALID_PAYER`, `INVALID_SPLIT`, `INVALID_MEMBER` |
+| 401 | `UNAUTHORIZED`, `INVALID_CREDENTIALS` |
+| 404 | `NOT_FOUND` |
+| 409 | `EMAIL_TAKEN`, `DUPLICATE_EMAIL` |
+| 429 | `TOO_MANY_REQUESTS` |
 
-```json
-{
-  "description": "Táxi",
-  "totalCents": "3000",
-  "payerId": "UUID_BRUNO",
-  "splitMode": "CUSTOM",
-  "shares": [
-    { "memberId": "UUID_ANA", "amountCents": "1000" },
-    { "memberId": "UUID_CARLA", "amountCents": "2000" }
-  ]
-}
-```
+## Integridade no banco
 
-O pagador pode não participar do rateio. Cotas são não negativas e devem somar exatamente o total. IDs duplicados e membros de outros grupos são rejeitados. E-mails são normalizados e únicos dentro do grupo. Valor por despesa: 1 a 9223372036854775807 centavos.
+Além das validações da API, o PostgreSQL garante:
 
-O extrato retorna `totalExpenseCents`, `members` com `paidCents`, `owedCents`, `balanceCents`, e os campos `transfers` e `optimal`. Saldo positivo recebe; negativo paga. No jantar isolado, Ana recebe 8000; Bruno e Carla pagam 4000 cada. Transferências usam `fromMemberId`, `toMemberId`, `amountCents`.
+- valores positivos e acertos entre pessoas diferentes (CHECK);
+- pagador, participantes da divisão e acertos sempre do mesmo grupo (FKs compostas);
+- partes de cada despesa somando exatamente o total, verificado no COMMIT por
+  triggers de restrição adiados (`drizzle/0002_expense_share_sum.sql`).
 
-Erros: `{ "error": { "code": "...", "message": "SplitGo: ..." } }`. Status 400 para JSON malformado, 404 para recurso/rota inexistente, 409 para e-mail duplicado, 413 para corpo acima de 64 KB, 422 para dados inválidos e 500 para falhas internas sem expor detalhes.
+## Simplificação de dívidas
 
-## Arquitetura e dados
-
-- `src/api/app.mjs`: rotas, validação, serialização e erros.
-- `src/domain/accounting.ts`: divisão igual, saldos e simplificação, sem dependências de HTTP ou banco.
-- `src/persistence/postgres.mjs`: consultas parametrizadas, transações e bloqueio por grupo.
-- `src/persistence/memory.mjs`: demonstração e testes isolados.
-- `src/server.mjs`: configuração e ciclo de vida.
-- `scripts/migrate.mjs`: migration transacional com checksum e bloqueio de execução concorrente.
-
-User 1:N GroupMember; Group 1:N GroupMember/Expense/Settlement; Expense 1:N ExpenseShare. Um participante pode existir sem conta. Chaves compostas impedem pagador e cotistas de outros grupos. Settlement está reservado para futura confirmação de quitações: a API atual apenas sugere pagamentos, sem executá-los ou registrá-los.
-
-O saldo é calculado a partir dos lançamentos. Criar grupo/membros e criar despesa/cotas são operações atômicas. Escritas bloqueiam a linha do grupo e leituras usam snapshot consistente. CHECKs validam valores; triggers diferidos verificam a soma das cotas no commit.
-
-`db/001_initial.sql` e `prisma/constraints.sql` são a fonte executável do banco. `prisma/schema.prisma` permanece como referência conceitual do modelo inicial; defaults, datas e restrições adicionais estão no SQL. Não usar `prisma migrate`; o backend não depende da CLI ou do cliente Prisma.
-
-Não inserir quitações manualmente: o extrato HTTP atual considera apenas despesas, pois não há confirmação de pagamentos nesta etapa. O domínio já aceita pagamentos em `calculateBalances(memberIds, expenses, settlements)` para futura extensão: saldo = despesas pagas − cotas + quitações enviadas − quitações recebidas.
-
-## Simplificação
-
-`simplifyDebts(balances)` retorna `{ transfers, optimal }` sem alterar a entrada. Exige IDs únicos e soma zero e pressupõe que qualquer membro possa pagar qualquer outro do grupo.
-
-Até **12 membros com saldo não nulo**, programação dinâmica encontra a partição com o máximo de subconjuntos de soma zero. Um componente conectado de k pessoas exige no mínimo k−1 transferências; maximizar componentes minimiza transferências. O pareamento dentro dos componentes reconstrói a solução ótima. Custo O(3^n) em tempo e O(2^n) em memória.
-
-Acima desse limite, o guloso produz no máximo n−1 transferências e retorna **optimal: false**, sem garantir mínimo absoluto. Exigir mínimo absoluto para grupos maiores requer solver exato com execução assíncrona e limites definidos.
-
-A divisão igual distribui o resto de centavos na ordem estável dos IDs. Todos os cálculos usam bigint.
-
-## Verificação e limites
-
-```powershell
-npm test
-```
-
-Testes de domínio e HTTP real com repositório em memória cobrem grupos, participantes, despesas iguais/personalizadas, extrato, conservação de dinheiro, entradas inválidas e ausência de escritas parciais. A otimização é comparada com um algoritmo independente em 100 grupos pequenos.
-
-O ambiente desta entrega não possui PostgreSQL/Docker disponível. Migration e adaptador PostgreSQL precisam de execução de integração em um ambiente com banco. O modo memória e os testes HTTP podem ser executados imediatamente. Recibos, frontend e autenticação ainda não estão implementados.
-
-Para habilitar o teste de integração real, configure `TEST_DATABASE_URL` e execute `npm test`. O teste cria e remove seu próprio schema, verifica persistência, chaves estrangeiras e rollback de uma divisão inválida. Sem essa variável, ele aparece como ignorado. O usuário de teste precisa de permissão para criar schemas.
+`src/domain/settle.ts`: minimizar transferências equivale a particionar os
+membros no maior número de subgrupos que somam zero (cada subgrupo de k pessoas
+se resolve com k − 1 transferências). Para até 16 membros com saldo ≠ 0, a API
+usa programação dinâmica em bitmask (solução **ótima**). Acima disso, usa o
+método guloso (maior devedor → maior credor), que garante no máximo n − 1
+transferências.
