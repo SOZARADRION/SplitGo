@@ -40,9 +40,10 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
 
 export async function api<T>(
   path: string,
-  opts: { method?: string; body?: unknown; token?: string | null } = {},
+  opts: { method?: string; body?: unknown; form?: FormData; token?: string | null } = {},
 ): Promise<T> {
   const headers: Record<string, string> = { accept: "application/json" };
+  // Com FormData o fetch define o content-type (com o boundary) sozinho.
   if (opts.body !== undefined) headers["content-type"] = "application/json";
   if (opts.token) headers.authorization = `Bearer ${opts.token}`;
 
@@ -51,7 +52,7 @@ export async function api<T>(
     res = await fetch(`${API_URL}${path}`, {
       method: opts.method ?? "GET",
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.form ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
     });
   } catch {
     throw new ApiError(0, "NETWORK_ERROR", "Não foi possível conectar ao SplitGo. Verifique sua conexão.");
@@ -106,4 +107,34 @@ export const authApi = {
 
 export const groupsApi = {
   list: (token: string) => api<GroupListItem[]>("/api/groups", { token }),
+};
+
+/** Resultado da leitura de recibo. Valores em centavos. */
+export interface ParsedReceipt {
+  estabelecimento: string | null;
+  data: string | null; // AAAA-MM-DD
+  valor_total: number | null;
+  itens: { descricao: string; quantidade: number; valor_unitario: number; valor_total_item: number }[];
+  fonte: "claude" | "simulado";
+  avisos: string[];
+}
+
+export const receiptsApi = {
+  /**
+   * Envia a foto/PDF do recibo (ex.: `uri` vindo do expo-image-picker ou da câmera).
+   * No celular o arquivo vai como { uri, name, type }; na web, como Blob.
+   */
+  parse: async (token: string, file: { uri: string; name?: string; mimeType?: string }) => {
+    const name = file.name ?? "recibo.jpg";
+    const type = file.mimeType ?? "image/jpeg";
+    const form = new FormData();
+    if (Platform.OS === "web") {
+      const blob = await (await fetch(file.uri)).blob();
+      form.append("file", blob, name);
+    } else {
+      // Formato aceito pelo FormData do React Native.
+      form.append("file", { uri: file.uri, name, type } as unknown as Blob);
+    }
+    return api<ParsedReceipt>("/api/receipts/parse", { method: "POST", form, token });
+  },
 };

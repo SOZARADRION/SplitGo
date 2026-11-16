@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { expect } from "vitest";
-import { buildApp } from "../src/app.js";
+import { buildApp, type AppDeps } from "../src/app.js";
 import type { AppConfig } from "../src/config.js";
 import { openDb, type DbHandle } from "../src/db/client.js";
 
@@ -9,12 +9,13 @@ export const testConfig: AppConfig = {
   jwtExpiresIn: "1h",
   bcryptRounds: 4, // rápido nos testes; produção usa 12
   authRateLimitPerMinute: 1000,
+  receipts: { parser: "mock", model: "claude-opus-5-5", maxBytes: 5 * 1024 * 1024, rateLimitPerMinute: 1000 },
 };
 
 /** App com PostgreSQL real (PGlite) em memória e as mesmas migrações de produção. */
-export async function createTestApp(config: Partial<AppConfig> = {}) {
+export async function createTestApp(config: Partial<AppConfig> = {}, deps: AppDeps = {}) {
   const handle: DbHandle = await openDb();
-  const app = await buildApp(handle.db, { ...testConfig, ...config });
+  const app = await buildApp(handle.db, { ...testConfig, ...config }, {}, deps);
   return {
     app,
     close: async () => {

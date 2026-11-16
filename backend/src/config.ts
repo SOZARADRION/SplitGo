@@ -7,6 +7,15 @@ export interface AppConfig {
   bcryptRounds: number;
   /** Tentativas de login/cadastro por IP por minuto. */
   authRateLimitPerMinute: number;
+  receipts: {
+    /** "claude" = leitura real via API da Anthropic · "mock" = leitura simulada */
+    parser: "claude" | "mock";
+    model: string;
+    /** Tamanho máximo do arquivo enviado, em bytes. */
+    maxBytes: number;
+    /** Leituras por IP por minuto (cada leitura real tem custo). */
+    rateLimitPerMinute: number;
+  };
 }
 
 const DEV_SECRET = "splitgo-dev-secret-NAO-USE-EM-PRODUCAO-0123456789";
@@ -20,10 +29,22 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   if (!env.JWT_SECRET) {
     console.warn("[SplitGo] JWT_SECRET não definido: usando segredo de desenvolvimento.");
   }
+  // Leitor real só quando há credencial; RECEIPT_PARSER força um dos modos.
+  const parser = env.RECEIPT_PARSER ?? (env.ANTHROPIC_API_KEY ? "claude" : "mock");
+  if (parser !== "claude" && parser !== "mock") {
+    throw new Error('RECEIPT_PARSER deve ser "claude" ou "mock"');
+  }
+
   return {
     jwtSecret,
     jwtExpiresIn: env.JWT_EXPIRES_IN ?? "7d",
     bcryptRounds: Number(env.BCRYPT_ROUNDS ?? 12),
     authRateLimitPerMinute: Number(env.AUTH_RATE_LIMIT ?? 10),
+    receipts: {
+      parser,
+      model: env.RECEIPT_MODEL ?? "claude-opus-5-5",
+      maxBytes: Number(env.RECEIPT_MAX_MB ?? 5) * 1024 * 1024,
+      rateLimitPerMinute: Number(env.RECEIPT_RATE_LIMIT ?? 20),
+    },
   };
 }

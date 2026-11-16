@@ -8,10 +8,22 @@ import type { Db } from "./db/client.js";
 import { AppError } from "./errors.js";
 import { authRoutes } from "./routes/auth.js";
 import { groupRoutes } from "./routes/groups.js";
+import { receiptRoutes } from "./routes/receipts.js";
+import { createReceiptParser, type ReceiptParser } from "./receipts/index.js";
+
+export interface AppDeps {
+  /** Permite trocar o leitor de recibos (ex.: um falso nos testes). */
+  receiptParser?: ReceiptParser;
+}
 
 z.config(z.locales.ptBR()); // mensagens de validação em português
 
-export async function buildApp(db: Db, config: AppConfig, opts: FastifyServerOptions = {}) {
+export async function buildApp(
+  db: Db,
+  config: AppConfig,
+  opts: FastifyServerOptions = {},
+  deps: AppDeps = {},
+) {
   const app = Fastify({ bodyLimit: 64 * 1024, ...opts }); // 64 KB por requisição
 
   await app.register(cors, { origin: true });
@@ -38,7 +50,7 @@ export async function buildApp(db: Db, config: AppConfig, opts: FastifyServerOpt
       });
     }
     if (status === 413) {
-      return reply.code(413).send({ error: "PAYLOAD_TOO_LARGE", message: "Requisição grande demais (máx. 64 KB)" });
+      return reply.code(413).send({ error: "PAYLOAD_TOO_LARGE", message: "Requisição grande demais" });
     }
     if (status && status >= 400 && status < 500) {
       // Erros do próprio Fastify (JSON malformado, corpo grande demais, etc.)
@@ -54,6 +66,10 @@ export async function buildApp(db: Db, config: AppConfig, opts: FastifyServerOpt
     async (api) => {
       await api.register(authRoutes, { db, config });
       await api.register(groupRoutes, { db });
+      await api.register(receiptRoutes, {
+        config,
+        parser: deps.receiptParser ?? createReceiptParser(config),
+      });
     },
     { prefix: "/api" },
   );
