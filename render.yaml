@@ -1,0 +1,38 @@
+# Blueprint do Render: API do SplitGo + PostgreSQL gerenciado.
+# Guia passo a passo: docs/deploy.md
+services:
+  - type: web
+    name: splitgo-api
+    runtime: node
+    plan: free
+    region: virginia # EUA (leste): a região do Render mais próxima do Brasil
+    rootDir: backend
+    # --include=dev: o TypeScript (devDependency) é necessário para compilar.
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    # Só publica depois que a CI do GitHub (tipos + testes) passar.
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true # 256 bits aleatórios gerados pelo Render
+      - key: DATABASE_URL
+        fromDatabase:
+          name: splitgo-db
+          property: connectionString
+      - key: TRUST_PROXY
+        value: "1" # o balanceador do Render (ver docs/deploy.md para conferir)
+      - key: ANTHROPIC_API_KEY
+        sync: false # opcional: sem ela, a leitura de recibos é simulada
+
+databases:
+  - name: splitgo-db
+    plan: free # expira em 30 dias; ver docs/deploy.md
+    region: virginia
+    databaseName: splitgo
+    user: splitgo
+    postgresMajorVersion: "17"

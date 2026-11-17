@@ -27,6 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run build # o mesmo build que o Render executa ao publicar
 
   mobile:
     name: App · Tipos e lint

@@ -24,9 +24,17 @@ export async function buildApp(
   opts: FastifyServerOptions = {},
   deps: AppDeps = {},
 ) {
-  const app = Fastify({ bodyLimit: 64 * 1024, ...opts }); // 64 KB por requisição
+  const app = Fastify({
+    bodyLimit: 64 * 1024, // 64 KB por requisição
+    // Confia só nos N saltos mais próximos: o IP do cliente é o último que o
+    // nosso proxy acrescentou ao X-Forwarded-For (não dá para forjar).
+    ...(config.trustProxyHops > 0
+      ? { trustProxy: (_addr: string, hop: number) => hop < config.trustProxyHops }
+      : {}),
+    ...opts,
+  });
 
-  await app.register(cors, { origin: true });
+  await app.register(cors, { origin: config.corsOrigins });
   // global: false → o limite vale só nas rotas que pedem (login/cadastro).
   await app.register(rateLimit, { global: false });
   await app.register(authPlugin, { db, config });

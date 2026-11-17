@@ -63,6 +63,7 @@ Para executar no celular ou em um emulador, consulte o [guia do app](mobile/READ
 - [Desenvolvimento e contribuição](CONTRIBUTING.md) — configuração, Docker, migrações e verificações.
 - [Referência da API](docs/api.md) — rotas, autenticação, formatos de divisão, recibos e erros.
 - [Arquitetura](docs/architecture.md) — organização do código, regras de dinheiro e integridade dos dados.
+- [Publicação](docs/deploy.md) — como colocar a API no ar no Render, com PostgreSQL gerenciado.
 
 ## Autor
 

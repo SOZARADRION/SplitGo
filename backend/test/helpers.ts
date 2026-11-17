@@ -9,6 +9,8 @@ export const testConfig: AppConfig = {
   jwtExpiresIn: "1h",
   bcryptRounds: 4, // rápido nos testes; produção usa 12
   authRateLimitPerMinute: 1000,
+  trustProxyHops: 0,
+  corsOrigins: true,
   receipts: { parser: "mock", model: "claude-opus-5-5", maxBytes: 5 * 1024 * 1024, rateLimitPerMinute: 1000 },
 };
 

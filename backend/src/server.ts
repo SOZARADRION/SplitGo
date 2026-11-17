@@ -6,6 +6,13 @@ const port = Number(process.env.PORT ?? 3333);
 const host = process.env.HOST ?? "0.0.0.0"; // 0.0.0.0 → acessível pelo celular na mesma rede
 
 const config = loadConfig();
+
+// Em produção o disco do servidor costuma ser temporário (no Render, apagado a
+// cada deploy): sem DATABASE_URL os dados sumiriam em silêncio.
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  throw new Error("DATABASE_URL é obrigatória em produção (PostgreSQL gerenciado)");
+}
+
 const { db, close } = await openDb({
   databaseUrl: process.env.DATABASE_URL,
   dataDir: process.env.PGLITE_DIR ?? "./data/pglite",

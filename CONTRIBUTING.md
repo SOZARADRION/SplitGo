@@ -18,6 +18,10 @@ Copie [backend/.env.example](backend/.env.example) para `backend/.env` se precis
 | `ANTHROPIC_API_KEY` | (vazio → leitura simulada) | ativa a leitura real de recibos com Claude |
 | `RECEIPT_PARSER` / `RECEIPT_MODEL` | automático / `claude-opus-5-5` | força `claude` ou `mock`; modelo usado |
 | `RECEIPT_MAX_MB` / `RECEIPT_RATE_LIMIT` | `5` / `20` | tamanho máximo do arquivo; leituras por IP por minuto |
+| `TRUST_PROXY` | `0` | proxies confiáveis à frente da API (ex.: `1` no Render), para o limite de tentativas usar o IP real |
+| `CORS_ORIGINS` | (vazio → qualquer origem) | sites autorizados a chamar a API, separados por vírgula |
+
+Em produção (`NODE_ENV=production`), a API exige `DATABASE_URL` e `JWT_SECRET`. Para publicar, veja [docs/deploy.md](docs/deploy.md).
 
 ### PostgreSQL local com Docker
 

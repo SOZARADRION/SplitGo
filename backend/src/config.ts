@@ -7,6 +7,14 @@ export interface AppConfig {
   bcryptRounds: number;
   /** Tentativas de login/cadastro por IP por minuto. */
   authRateLimitPerMinute: number;
+  /**
+   * Quantos proxies à frente da API são confiáveis (ex.: 1 no Render). Com isso
+   * o IP do cliente vem do X-Forwarded-For — necessário para o limite de
+   * tentativas valer por pessoa, e não para todos juntos. 0 = sem proxy.
+   */
+  trustProxyHops: number;
+  /** Origens web autorizadas (CORS). `true` = qualquer uma (a API usa token, não cookies). */
+  corsOrigins: true | string[];
   receipts: {
     /** "claude" = leitura real via API da Anthropic · "mock" = leitura simulada */
     parser: "claude" | "mock";
@@ -19,6 +27,15 @@ export interface AppConfig {
 }
 
 const DEV_SECRET = "splitgo-dev-secret-NAO-USE-EM-PRODUCAO-0123456789";
+
+function parseHops(value: string | undefined): number {
+  if (!value) return 0;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0 || n > 10) {
+    throw new Error("TRUST_PROXY deve ser o número de proxies confiáveis (ex.: 1)");
+  }
+  return n;
+}
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const isProd = env.NODE_ENV === "production";
@@ -40,6 +57,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     jwtExpiresIn: env.JWT_EXPIRES_IN ?? "7d",
     bcryptRounds: Number(env.BCRYPT_ROUNDS ?? 12),
     authRateLimitPerMinute: Number(env.AUTH_RATE_LIMIT ?? 10),
+    trustProxyHops: parseHops(env.TRUST_PROXY),
+    corsOrigins: env.CORS_ORIGINS
+      ? env.CORS_ORIGINS.split(",").map((o) => o.trim()).filter(Boolean)
+      : true,
     receipts: {
       parser,
       model: env.RECEIPT_MODEL ?? "claude-opus-5-5",
