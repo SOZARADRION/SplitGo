@@ -9,10 +9,23 @@ export default function AppLayout() {
       screenOptions={{
         headerStyle: { backgroundColor: c.surface },
         headerTintColor: c.text,
+        headerTitleStyle: { fontWeight: "700" },
         contentStyle: { backgroundColor: c.background },
+        headerBackTitle: "Voltar",
       }}
     >
       <Stack.Screen name="index" options={{ title: "SplitGo" }} />
+      <Stack.Screen name="groups/[groupId]/index" options={{ title: "Grupo" }} />
+      {/* Formulários abrem como modal sobre a tela atual. */}
+      <Stack.Screen name="groups/new" options={{ title: "Novo grupo", presentation: "modal" }} />
+      <Stack.Screen
+        name="groups/[groupId]/new-expense"
+        options={{ title: "Nova despesa", presentation: "modal" }}
+      />
+      <Stack.Screen
+        name="groups/[groupId]/add-member"
+        options={{ title: "Adicionar participante", presentation: "modal" }}
+      />
     </Stack>
   );
 }

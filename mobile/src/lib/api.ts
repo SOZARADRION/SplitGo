@@ -105,9 +105,94 @@ export const authApi = {
   me: (token: string) => api<User>("/api/auth/me", { token }),
 };
 
+export interface Member {
+  id: string;
+  groupId: string;
+  userId: string | null;
+  name: string;
+  email: string | null;
+}
+
+export interface Group {
+  id: string;
+  name: string;
+  currency: string;
+  createdAt: string;
+  members: Member[];
+}
+
+export interface Expense {
+  id: string;
+  description: string;
+  amountCents: number;
+  splitType: "EQUAL" | "EXACT" | "PERCENT" | "SHARES";
+  paidByMemberId: string;
+  occurredAt: string;
+  shares: { memberId: string; amountCents: number }[];
+}
+
+export interface MemberBalance {
+  memberId: string;
+  name: string;
+  paidCents: number;
+  shareCents: number;
+  sentCents: number;
+  receivedCents: number;
+  /** > 0 recebe · < 0 deve */
+  balanceCents: number;
+}
+
+export interface Transfer {
+  fromMemberId: string;
+  fromName: string;
+  toMemberId: string;
+  toName: string;
+  amountCents: number;
+}
+
+export interface GroupSummary {
+  groupId: string;
+  groupName: string;
+  currency: string;
+  totalSpentCents: number;
+  members: MemberBalance[];
+  transfers: Transfer[];
+}
+
+export type SplitInput =
+  | { type: "EQUAL"; memberIds: string[] }
+  | { type: "EXACT"; shares: { memberId: string; amountCents: number }[] };
+
+export interface NewExpense {
+  description: string;
+  amountCents: number;
+  paidByMemberId: string;
+  occurredAt?: string;
+  split: SplitInput;
+}
+
 export const groupsApi = {
   list: (token: string) => api<GroupListItem[]>("/api/groups", { token }),
+  create: (token: string, body: { name: string; members: { name: string; email?: string | null }[] }) =>
+    api<Group>("/api/groups", { method: "POST", body, token }),
+  get: (token: string, groupId: string) => api<Group>(`/api/groups/${groupId}`, { token }),
+  summary: (token: string, groupId: string) => api<GroupSummary>(`/api/groups/${groupId}/summary`, { token }),
+  addMember: (token: string, groupId: string, body: { name: string; email?: string | null }) =>
+    api<Member>(`/api/groups/${groupId}/members`, { method: "POST", body, token }),
+  expenses: (token: string, groupId: string) => api<Expense[]>(`/api/groups/${groupId}/expenses`, { token }),
+  createExpense: (token: string, groupId: string, body: NewExpense) =>
+    api<Expense>(`/api/groups/${groupId}/expenses`, { method: "POST", body, token }),
+  deleteExpense: (token: string, groupId: string, expenseId: string) =>
+    api<void>(`/api/groups/${groupId}/expenses/${expenseId}`, { method: "DELETE", token }),
+  settle: (token: string, groupId: string, t: { fromMemberId: string; toMemberId: string; amountCents: number }) =>
+    api<unknown>(`/api/groups/${groupId}/settlements`, { method: "POST", body: t, token }),
 };
+
+/** Mensagem amigável para qualquer erro vindo da API ou da rede. */
+export function errorMessage(err: unknown, fallback = "Algo deu errado. Tente novamente."): string {
+  if (err instanceof ApiError) return err.issues[0]?.message ? `${err.message}: ${err.issues[0].message}` : err.message;
+  return fallback;
+}
 
 /** Resultado da leitura de recibo. Valores em centavos. */
 export interface ParsedReceipt {

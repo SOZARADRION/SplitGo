@@ -24,7 +24,7 @@ O SplitGo ajuda grupos a dividir despesas de viagens, repúblicas e outras situa
 | Grupos | Cadastro de grupos e participantes |
 | Despesas | Divisão igualitária, por valor exato, por percentual ou por pesos |
 | Saldos e acertos | Saldo por participante, sugestões de transferências e registro de pagamentos |
-| Recibos | Leitura de imagens e PDFs pela API, com modo simulado para desenvolvimento |
+| Recibos | Foto ou imagem do recibo preenche a despesa no app (leitura por IA, com modo simulado para desenvolvimento) |
 
 ## Início rápido
 

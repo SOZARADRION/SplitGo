@@ -35,6 +35,22 @@ export function AuthLayout({ title, subtitle, children }: { title: string; subti
   );
 }
 
+/** Corpo rolável para formulários da área logada (o cabeçalho vem do Stack). */
+export function FormScreen({ children }: { children: ReactNode }) {
+  const c = useColors();
+  return (
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: c.background }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={Platform.OS === "ios" ? 64 : 0}
+    >
+      <ScrollView contentContainerStyle={styles.formScroll} keyboardShouldPersistTaps="handled">
+        <View style={[styles.inner, { gap: spacing.md }]}>{children}</View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
 type FieldProps = Omit<TextInputProps, "ref"> & {
   label: string;
   error?: string;
@@ -104,6 +120,7 @@ export function FormError({ message }: { message?: string | null }) {
 
 const styles = StyleSheet.create({
   scroll: { flexGrow: 1, justifyContent: "center", padding: spacing.lg },
+  formScroll: { padding: spacing.md, paddingBottom: spacing.xl * 2 },
   inner: { width: "100%", maxWidth: 420, alignSelf: "center" },
   brand: { fontSize: 32, fontWeight: "800", letterSpacing: -0.5, marginBottom: spacing.lg },
   title: { fontSize: 24, fontWeight: "700" },
