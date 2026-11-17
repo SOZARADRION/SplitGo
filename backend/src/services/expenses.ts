@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { Db } from "../db/client.js";
 import { expenseShares, expenses } from "../db/schema.js";
-import { resolveSplit, SplitError, type SplitInput } from "../domain/split.js";
+import { resolveSplit, SplitError, type ResolvedShare, type SplitInput } from "../domain/split.js";
 import { badRequest, notFound } from "../errors.js";
 import { getGroup } from "./groups.js";
 
@@ -13,12 +13,8 @@ export interface NewExpense {
   split: SplitInput;
 }
 
-export async function createExpense(
-  db: Db,
-  groupId: string,
-  input: NewExpense,
-  createdByUserId: string | null = null,
-) {
+/** Valida pagador e divisão contra os participantes do grupo e devolve as partes em centavos. */
+async function resolveExpenseShares(db: Db, groupId: string, input: NewExpense): Promise<ResolvedShare[]> {
   const group = await getGroup(db, groupId);
   const memberIds = new Set(group.members.map((m) => m.id));
 
@@ -26,7 +22,7 @@ export async function createExpense(
     throw badRequest("INVALID_PAYER", "Quem pagou não é participante deste grupo");
   }
 
-  let shares;
+  let shares: ResolvedShare[];
   try {
     shares = resolveSplit(input.amountCents, input.split);
   } catch (err) {
@@ -35,10 +31,28 @@ export async function createExpense(
     }
     throw err;
   }
-  const outsiders = shares.filter((s) => !memberIds.has(s.memberId));
-  if (outsiders.length) {
+  if (shares.some((s) => !memberIds.has(s.memberId))) {
     throw badRequest("INVALID_SPLIT", "A divisão inclui alguém que não é participante do grupo");
   }
+  return shares;
+}
+
+const shareRows = (expenseId: string, groupId: string, shares: ResolvedShare[]) =>
+  shares.map((s) => ({
+    expenseId,
+    groupId,
+    memberId: s.memberId,
+    amountCents: s.amountCents,
+    input: s.input === null ? null : String(s.input),
+  }));
+
+export async function createExpense(
+  db: Db,
+  groupId: string,
+  input: NewExpense,
+  createdByUserId: string | null = null,
+) {
+  const shares = await resolveExpenseShares(db, groupId, input);
 
   return db.transaction(async (tx) => {
     const [expense] = await tx
@@ -53,19 +67,37 @@ export async function createExpense(
         ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
       })
       .returning();
-    const savedShares = await tx
-      .insert(expenseShares)
-      .values(
-        shares.map((s) => ({
-          expenseId: expense.id,
-          groupId,
-          memberId: s.memberId,
-          amountCents: s.amountCents,
-          input: s.input === null ? null : String(s.input),
-        })),
-      )
+    const saved = await tx.insert(expenseShares).values(shareRows(expense.id, groupId, shares)).returning();
+    return { ...expense, shares: saved.map(toShareDto) };
+  });
+}
+
+/**
+ * Substitui todos os dados de uma despesa (descrição, valor, pagador, data e divisão).
+ * Atômico: as partes antigas saem e as novas entram na mesma transação, e o
+ * banco confere no COMMIT que elas somam o novo total.
+ */
+export async function updateExpense(db: Db, groupId: string, expenseId: string, input: NewExpense) {
+  const shares = await resolveExpenseShares(db, groupId, input);
+
+  return db.transaction(async (tx) => {
+    const [expense] = await tx
+      .update(expenses)
+      .set({
+        description: input.description.trim(),
+        amountCents: input.amountCents,
+        splitType: input.split.type,
+        paidByMemberId: input.paidByMemberId,
+        updatedAt: new Date(),
+        ...(input.occurredAt ? { occurredAt: input.occurredAt } : {}),
+      })
+      .where(and(eq(expenses.id, expenseId), eq(expenses.groupId, groupId), isNull(expenses.deletedAt)))
       .returning();
-    return { ...expense, shares: savedShares.map(toShareDto) };
+    if (!expense) throw notFound("Despesa");
+
+    await tx.delete(expenseShares).where(eq(expenseShares.expenseId, expenseId));
+    const saved = await tx.insert(expenseShares).values(shareRows(expenseId, groupId, shares)).returning();
+    return { ...expense, shares: saved.map(toShareDto) };
   });
 }
 

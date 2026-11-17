@@ -372,3 +372,158 @@ describe("limites", () => {
     expect(extra.json().error).toBe("GROUP_LIMIT");
   });
 });
+
+describe("edição de despesa, desfazer pagamento e saldo por grupo", () => {
+  const equal = (paidBy: string, amountCents: number, memberIds: string[]) => ({
+    description: "Mercado",
+    amountCents,
+    paidByMemberId: paidBy,
+    split: { type: "EQUAL", memberIds },
+  });
+
+  it("edita valor, pagador e divisão de uma despesa", async () => {
+    const { user, base, ana, bia, caio } = await createChurrasco();
+    const h = user.headers;
+    const created = (
+      await app.inject({ method: "POST", url: `${base}/expenses`, headers: h, payload: equal(ana.id, 3000, [ana.id, bia.id, caio.id]) })
+    ).json();
+    expect(created.updatedAt).toBeNull();
+
+    const res = await app.inject({
+      method: "PUT",
+      url: `${base}/expenses/${created.id}`,
+      headers: h,
+      payload: {
+        description: "Mercado (corrigido)",
+        amountCents: 5000,
+        paidByMemberId: bia.id,
+        split: { type: "EXACT", shares: [{ memberId: ana.id, amountCents: 1000 }, { memberId: bia.id, amountCents: 4000 }] },
+      },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const updated = res.json();
+    expect(updated).toMatchObject({ id: created.id, description: "Mercado (corrigido)", amountCents: 5000, splitType: "EXACT" });
+    expect(updated.updatedAt).not.toBeNull();
+    expect(updated.shares).toHaveLength(2);
+
+    const list = (await app.inject({ method: "GET", url: `${base}/expenses`, headers: h })).json();
+    expect(list).toHaveLength(1);
+    const summary = (await app.inject({ method: "GET", url: `${base}/summary`, headers: h })).json();
+    const bal = Object.fromEntries(summary.members.map((m: { memberId: string; balanceCents: number }) => [m.memberId, m.balanceCents]));
+    // Bia pagou 5000 e ficou com 4000 → +1000; Ana deve 1000; Caio saiu da divisão.
+    expect(bal).toEqual({ [ana.id]: -1000, [bia.id]: 1000, [caio.id]: 0 });
+  });
+
+  it("edição inválida não altera nada (operação atômica)", async () => {
+    const { user, base, ana, bia } = await createChurrasco();
+    const h = user.headers;
+    const created = (
+      await app.inject({ method: "POST", url: `${base}/expenses`, headers: h, payload: equal(ana.id, 2000, [ana.id, bia.id]) })
+    ).json();
+    const bad = await app.inject({
+      method: "PUT",
+      url: `${base}/expenses/${created.id}`,
+      headers: h,
+      payload: { ...equal(ana.id, 2000, []), split: { type: "EXACT", shares: [{ memberId: bia.id, amountCents: 1 }] } },
+    });
+    expect(bad.statusCode).toBe(400);
+    const [still] = (await app.inject({ method: "GET", url: `${base}/expenses`, headers: h })).json();
+    expect(still).toMatchObject({ amountCents: 2000, splitType: "EQUAL", updatedAt: null });
+    expect(still.shares).toHaveLength(2);
+  });
+
+  it("não edita despesa excluída nem de outro grupo", async () => {
+    const g1 = await createChurrasco();
+    const g2 = await createChurrasco(g1.user);
+    const h = g1.user.headers;
+    const e = (
+      await app.inject({ method: "POST", url: `${g1.base}/expenses`, headers: h, payload: equal(g1.ana.id, 1000, [g1.ana.id]) })
+    ).json();
+    const otherGroup = await app.inject({
+      method: "PUT",
+      url: `${g2.base}/expenses/${e.id}`,
+      headers: h,
+      payload: equal(g2.ana.id, 1000, [g2.ana.id]),
+    });
+    expect(otherGroup.statusCode).toBe(404);
+
+    await app.inject({ method: "DELETE", url: `${g1.base}/expenses/${e.id}`, headers: h });
+    const deleted = await app.inject({
+      method: "PUT",
+      url: `${g1.base}/expenses/${e.id}`,
+      headers: h,
+      payload: equal(g1.ana.id, 1000, [g1.ana.id]),
+    });
+    expect(deleted.statusCode).toBe(404);
+  });
+
+  it("desfaz um pagamento registrado por engano", async () => {
+    const { user, base, ana, bia } = await createChurrasco();
+    const h = user.headers;
+    await app.inject({ method: "POST", url: `${base}/expenses`, headers: h, payload: equal(ana.id, 2000, [ana.id, bia.id]) });
+    const s = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/settlements`,
+        headers: h,
+        payload: { fromMemberId: bia.id, toMemberId: ana.id, amountCents: 1000 },
+      })
+    ).json();
+
+    let summary = (await app.inject({ method: "GET", url: `${base}/summary`, headers: h })).json();
+    expect(summary.transfers).toEqual([]);
+    const listed = (await app.inject({ method: "GET", url: `${base}/settlements`, headers: h })).json();
+    expect(listed).toEqual([expect.objectContaining({ id: s.id, amountCents: 1000, createdByUserId: user.id })]);
+
+    const del = await app.inject({ method: "DELETE", url: `${base}/settlements/${s.id}`, headers: h });
+    expect(del.statusCode).toBe(204);
+    expect((await app.inject({ method: "DELETE", url: `${base}/settlements/${s.id}`, headers: h })).statusCode).toBe(404);
+
+    summary = (await app.inject({ method: "GET", url: `${base}/summary`, headers: h })).json();
+    expect(summary.transfers).toEqual([expect.objectContaining({ fromMemberId: bia.id, toMemberId: ana.id, amountCents: 1000 })]);
+    expect((await app.inject({ method: "GET", url: `${base}/settlements`, headers: h })).json()).toEqual([]);
+  });
+
+  it("quem não participa não lista nem desfaz pagamentos", async () => {
+    const { user, base, ana, bia } = await createChurrasco();
+    const s = (
+      await app.inject({
+        method: "POST",
+        url: `${base}/settlements`,
+        headers: user.headers,
+        payload: { fromMemberId: bia.id, toMemberId: ana.id, amountCents: 500 },
+      })
+    ).json();
+    const intruso = await registerUser(app);
+    expect((await app.inject({ method: "GET", url: `${base}/settlements`, headers: intruso.headers })).statusCode).toBe(404);
+    expect(
+      (await app.inject({ method: "DELETE", url: `${base}/settlements/${s.id}`, headers: intruso.headers })).statusCode,
+    ).toBe(404);
+  });
+
+  it("a lista de grupos traz o saldo do usuário em cada grupo", async () => {
+    const user = await registerUser(app, { name: "Lia" });
+    const g1 = await createChurrasco(user); // "Ana" = membro da Lia (criadora)
+    const g2 = await createChurrasco(user);
+    const h = user.headers;
+    // g1: Lia pagou 3000 dividido por 3 → recebe 2000
+    await app.inject({ method: "POST", url: `${g1.base}/expenses`, headers: h, payload: equal(g1.ana.id, 3000, [g1.ana.id, g1.bia.id, g1.caio.id]) });
+    // g2: Bia pagou 1000 dividido com a Lia → Lia deve 500; depois Lia paga 200
+    await app.inject({ method: "POST", url: `${g2.base}/expenses`, headers: h, payload: equal(g2.bia.id, 1000, [g2.ana.id, g2.bia.id]) });
+    await app.inject({
+      method: "POST",
+      url: `${g2.base}/settlements`,
+      headers: h,
+      payload: { fromMemberId: g2.ana.id, toMemberId: g2.bia.id, amountCents: 200 },
+    });
+    // Despesa excluída não conta
+    const gone = (
+      await app.inject({ method: "POST", url: `${g1.base}/expenses`, headers: h, payload: equal(g1.bia.id, 9000, [g1.ana.id]) })
+    ).json();
+    await app.inject({ method: "DELETE", url: `${g1.base}/expenses/${gone.id}`, headers: h });
+
+    const list = (await app.inject({ method: "GET", url: "/api/groups", headers: h })).json();
+    const byId = Object.fromEntries(list.map((g: { id: string; myBalanceCents: number }) => [g.id, g.myBalanceCents]));
+    expect(byId).toEqual({ [g1.group.id]: 2000, [g2.group.id]: -300 });
+  });
+});

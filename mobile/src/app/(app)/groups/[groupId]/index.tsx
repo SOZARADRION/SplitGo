@@ -1,10 +1,10 @@
 import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
-import { ActivityIndicator, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSession } from "@/auth/session";
 import { FormError, PrimaryButton } from "@/components/form";
 import { Avatar, Card, confirm, EmptyState, notify, SecondaryButton, SectionTitle } from "@/components/ui";
-import { errorMessage, groupsApi, type Transfer } from "@/lib/api";
+import { errorMessage, groupsApi, type Settlement, type Transfer } from "@/lib/api";
 import { formatBRL, formatDate } from "@/lib/money";
 import { radius, spacing, useColors, type Colors } from "@/lib/theme";
 import { useFocusData } from "@/lib/use-focus-data";
@@ -23,12 +23,13 @@ export default function GroupScreen() {
   const token = session?.token ?? "";
 
   const load = useCallback(async () => {
-    const [group, summary, expenses] = await Promise.all([
+    const [group, summary, expenses, settlements] = await Promise.all([
       groupsApi.get(token, groupId),
       groupsApi.summary(token, groupId),
       groupsApi.expenses(token, groupId),
+      groupsApi.settlements(token, groupId),
     ]);
-    return { group, summary, expenses };
+    return { group, summary, expenses, settlements };
   }, [token, groupId]);
 
   const { data, error, loading, reload } = useFocusData(load);
@@ -73,6 +74,20 @@ export default function GroupScreen() {
     }
   }
 
+  async function undoSettlement(s: Settlement, label: string) {
+    const ok = await confirm("Desfazer pagamento", `Desfazer "${label}"? O saldo volta a ficar em aberto.`, "Desfazer");
+    if (!ok) return;
+    setBusy(`s-${s.id}`);
+    try {
+      await groupsApi.undoSettlement(token, groupId, s.id);
+      await reload();
+    } catch (err) {
+      notify("Não foi possível desfazer", errorMessage(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (!data) {
     return (
       <View style={[styles.center, { backgroundColor: c.background }]}>
@@ -81,7 +96,7 @@ export default function GroupScreen() {
     );
   }
 
-  const { group, summary, expenses } = data;
+  const { group, summary, expenses, settlements } = data;
   const me = group.members.find((m) => m.userId === session?.user.id);
   const myBalance = summary.members.find((b) => b.memberId === me?.id)?.balanceCents ?? 0;
   const names = new Map(group.members.map((m) => [m.id, m.name]));
@@ -203,13 +218,27 @@ export default function GroupScreen() {
           <Card style={{ paddingVertical: spacing.xs }}>
             {expenses.map((e, i) => (
               <View key={e.id} style={[styles.row, i > 0 && { borderTopWidth: 1, borderTopColor: c.border }]}>
-                <View style={{ flex: 1 }}>
-                  <Text style={[styles.name, { color: c.text }]}>{e.description}</Text>
+                <Pressable
+                  style={({ pressed }) => [{ flex: 1, opacity: pressed ? 0.6 : 1 }]}
+                  accessibilityRole="button"
+                  accessibilityHint="Abre a despesa para editar"
+                  onPress={() =>
+                    router.push({
+                      pathname: "/groups/[groupId]/new-expense",
+                      params: { groupId, expenseId: e.id },
+                    })
+                  }
+                >
+                  <Text style={[styles.name, { color: c.text }]}>
+                    {e.description}
+                    {e.updatedAt ? <Text style={{ color: c.textMuted, fontWeight: "500" }}> · editada</Text> : null}
+                  </Text>
                   <Text style={{ color: c.textMuted, fontSize: 13 }}>
                     {names.get(e.paidByMemberId) ?? "?"} pagou · {formatDate(e.occurredAt)} · dividido entre{" "}
                     {e.shares.length}
                   </Text>
-                </View>
+                  <Text style={{ color: c.primary, fontSize: 13, fontWeight: "600", marginTop: 2 }}>Editar ›</Text>
+                </Pressable>
                 <View style={{ alignItems: "flex-end", gap: spacing.xs }}>
                   <Text style={[styles.amount, { color: c.text }]}>{formatBRL(e.amountCents)}</Text>
                   <SecondaryButton
@@ -224,6 +253,34 @@ export default function GroupScreen() {
             ))}
           </Card>
         )}
+
+        {settlements.length > 0 ? (
+          <>
+            <SectionTitle>{`Pagamentos registrados (${settlements.length})`}</SectionTitle>
+            <Card style={{ paddingVertical: spacing.xs }}>
+              {settlements.map((s, i) => {
+                const label = `${names.get(s.fromMemberId) ?? "?"} pagou ${formatBRL(s.amountCents)} para ${
+                  names.get(s.toMemberId) ?? "?"
+                }`;
+                return (
+                  <View key={s.id} style={[styles.row, i > 0 && { borderTopWidth: 1, borderTopColor: c.border }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={{ color: c.text, fontSize: 15 }}>{label}</Text>
+                      <Text style={{ color: c.textMuted, fontSize: 13 }}>{formatDate(s.paidAt)}</Text>
+                    </View>
+                    <SecondaryButton
+                      compact
+                      tone="danger"
+                      title={busy === `s-${s.id}` ? "Desfazendo…" : "Desfazer"}
+                      disabled={busy !== null}
+                      onPress={() => undoSettlement(s, label)}
+                    />
+                  </View>
+                );
+              })}
+            </Card>
+          </>
+        ) : null}
       </ScrollView>
     </>
   );

@@ -95,6 +95,8 @@ export interface GroupListItem {
   currency: string;
   createdAt: string;
   memberCount: number;
+  /** saldo do usuário logado neste grupo: > 0 recebe · < 0 deve */
+  myBalanceCents: number;
 }
 
 export const authApi = {
@@ -128,7 +130,16 @@ export interface Expense {
   splitType: "EQUAL" | "EXACT" | "PERCENT" | "SHARES";
   paidByMemberId: string;
   occurredAt: string;
+  updatedAt: string | null;
   shares: { memberId: string; amountCents: number }[];
+}
+
+export interface Settlement {
+  id: string;
+  fromMemberId: string;
+  toMemberId: string;
+  amountCents: number;
+  paidAt: string;
 }
 
 export interface MemberBalance {
@@ -184,8 +195,14 @@ export const groupsApi = {
     api<Expense>(`/api/groups/${groupId}/expenses`, { method: "POST", body, token }),
   deleteExpense: (token: string, groupId: string, expenseId: string) =>
     api<void>(`/api/groups/${groupId}/expenses/${expenseId}`, { method: "DELETE", token }),
+  updateExpense: (token: string, groupId: string, expenseId: string, body: NewExpense) =>
+    api<Expense>(`/api/groups/${groupId}/expenses/${expenseId}`, { method: "PUT", body, token }),
   settle: (token: string, groupId: string, t: { fromMemberId: string; toMemberId: string; amountCents: number }) =>
     api<unknown>(`/api/groups/${groupId}/settlements`, { method: "POST", body: t, token }),
+  settlements: (token: string, groupId: string) =>
+    api<Settlement[]>(`/api/groups/${groupId}/settlements`, { token }),
+  undoSettlement: (token: string, groupId: string, settlementId: string) =>
+    api<void>(`/api/groups/${groupId}/settlements/${settlementId}`, { method: "DELETE", token }),
 };
 
 /** Mensagem amigável para qualquer erro vindo da API ou da rede. */

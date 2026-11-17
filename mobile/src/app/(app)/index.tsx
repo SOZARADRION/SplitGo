@@ -5,6 +5,7 @@ import { useSession } from "@/auth/session";
 import { FormError, PrimaryButton } from "@/components/form";
 import { EmptyState } from "@/components/ui";
 import { groupsApi } from "@/lib/api";
+import { formatBRL } from "@/lib/money";
 import { radius, spacing, useColors } from "@/lib/theme";
 import { useFocusData } from "@/lib/use-focus-data";
 
@@ -75,6 +76,28 @@ export default function HomeScreen() {
                 <Text style={{ color: c.textMuted, marginTop: spacing.xs }}>
                   {item.memberCount} {item.memberCount === 1 ? "participante" : "participantes"}
                 </Text>
+              </View>
+              <View style={{ alignItems: "flex-end", marginRight: spacing.sm }}>
+                {item.myBalanceCents === 0 ? (
+                  <Text style={{ color: c.textMuted, fontWeight: "600" }}>quite</Text>
+                ) : (
+                  <>
+                    <Text
+                      style={{
+                        color: item.myBalanceCents > 0 ? c.positive : c.negative,
+                        fontWeight: "800",
+                        fontVariant: ["tabular-nums"],
+                      }}
+                    >
+                      {formatBRL(Math.abs(item.myBalanceCents))}
+                    </Text>
+                    <Text
+                      style={{ color: item.myBalanceCents > 0 ? c.positive : c.negative, fontSize: 12, fontWeight: "600" }}
+                    >
+                      {item.myBalanceCents > 0 ? "você recebe" : "você deve"}
+                    </Text>
+                  </>
+                )}
               </View>
               <Text style={{ color: c.textMuted, fontSize: 22 }}>›</Text>
             </Pressable>

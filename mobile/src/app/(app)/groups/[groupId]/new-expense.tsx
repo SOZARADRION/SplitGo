@@ -1,10 +1,19 @@
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { Stack, useLocalSearchParams, useRouter } from "expo-router";
 import { useCallback, useState } from "react";
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from "react-native";
 import { useSession } from "@/auth/session";
 import { FormError, FormScreen, PrimaryButton, TextField } from "@/components/form";
 import { Card, Chip, Notice, SecondaryButton } from "@/components/ui";
-import { errorMessage, groupsApi, receiptsApi, type ParsedReceipt, type SplitInput } from "@/lib/api";
+import {
+  ApiError,
+  errorMessage,
+  groupsApi,
+  receiptsApi,
+  type Expense,
+  type Group,
+  type ParsedReceipt,
+  type SplitInput,
+} from "@/lib/api";
 import { centsToInput, formatBRL, formatDate, parseBRL } from "@/lib/money";
 import { PermissionDeniedError, pickReceiptImage, type ReceiptSource } from "@/lib/receipt-image";
 import { spacing, useColors } from "@/lib/theme";
@@ -15,23 +24,66 @@ const MAX_CENTS = 1_000_000_000; // mesmo limite da API (R$ 10 milhões)
 type Mode = "EQUAL" | "EXACT";
 type Errors = Partial<Record<"description" | "amount" | "split", string>>;
 
-export default function NewExpenseScreen() {
-  const { groupId } = useLocalSearchParams<{ groupId: string }>();
+/**
+ * Nova despesa ou, com o parâmetro `expenseId`, edição de uma despesa existente.
+ * Carrega os dados e só então monta o formulário, já com os valores iniciais.
+ */
+export default function ExpenseScreen() {
+  const { groupId, expenseId } = useLocalSearchParams<{ groupId: string; expenseId?: string }>();
+  const { session } = useSession();
+  const c = useColors();
+  const token = session?.token ?? "";
+
+  const load = useCallback(async () => {
+    const [group, expenses] = await Promise.all([
+      groupsApi.get(token, groupId),
+      expenseId ? groupsApi.expenses(token, groupId) : Promise.resolve<Expense[]>([]),
+    ]);
+    const expense = expenseId ? (expenses.find((e) => e.id === expenseId) ?? null) : null;
+    if (expenseId && !expense) throw new ApiError(404, "NOT_FOUND", "Despesa não encontrada");
+    return { group, expense };
+  }, [token, groupId, expenseId]);
+  const { data, error } = useFocusData(load);
+
+  return (
+    <>
+      <Stack.Screen options={{ title: expenseId ? "Editar despesa" : "Nova despesa" }} />
+      {data ? (
+        <ExpenseForm groupId={groupId} group={data.group} expense={data.expense} />
+      ) : (
+        <FormScreen>
+          {error ? <FormError message={error} /> : <ActivityIndicator color={c.primary} />}
+        </FormScreen>
+      )}
+    </>
+  );
+}
+
+function ExpenseForm({ groupId, group, expense }: { groupId: string; group: Group; expense: Expense | null }) {
   const { session } = useSession();
   const router = useRouter();
   const c = useColors();
   const token = session?.token ?? "";
+  const isEdit = expense !== null;
 
-  const load = useCallback(() => groupsApi.get(token, groupId), [token, groupId]);
-  const { data: group, error: loadError } = useFocusData(load);
-
-  const [description, setDescription] = useState("");
-  const [amountText, setAmountText] = useState("");
-  const [payerChoice, setPayerChoice] = useState<string | null>(null);
-  const [mode, setMode] = useState<Mode>("EQUAL");
-  const [excluded, setExcluded] = useState<Set<string>>(() => new Set());
-  const [exact, setExact] = useState<Record<string, string>>({});
-  const [occurredAt, setOccurredAt] = useState<string | null>(null);
+  // Valores iniciais: vazios (nova) ou os da despesa (edição). Divisões por
+  // percentual/peso feitas pela API são mostradas como valores em reais.
+  const [description, setDescription] = useState(expense?.description ?? "");
+  const [amountText, setAmountText] = useState(expense ? centsToInput(expense.amountCents) : "");
+  const [payerChoice, setPayerChoice] = useState<string | null>(expense?.paidByMemberId ?? null);
+  const [mode, setMode] = useState<Mode>(!expense || expense.splitType === "EQUAL" ? "EQUAL" : "EXACT");
+  const [excluded, setExcluded] = useState<Set<string>>(() => {
+    if (!expense) return new Set();
+    const inSplit = new Set(expense.shares.map((s) => s.memberId));
+    return new Set(group.members.filter((m) => !inSplit.has(m.id)).map((m) => m.id));
+  });
+  const [exact, setExact] = useState<Record<string, string>>(() =>
+    expense && expense.splitType !== "EQUAL"
+      ? Object.fromEntries(expense.shares.map((s) => [s.memberId, centsToInput(s.amountCents)]))
+      : {},
+  );
+  /** ISO completo; null = data de hoje (só em despesa nova) */
+  const [occurredAt, setOccurredAt] = useState<string | null>(expense?.occurredAt ?? null);
 
   const [receipt, setReceipt] = useState<ParsedReceipt | null>(null);
   const [reading, setReading] = useState(false);
@@ -40,14 +92,6 @@ export default function NewExpenseScreen() {
   const [errors, setErrors] = useState<Errors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  if (!group) {
-    return (
-      <FormScreen>
-        {loadError ? <FormError message={loadError} /> : <ActivityIndicator color={c.primary} />}
-      </FormScreen>
-    );
-  }
 
   const members = group.members;
   const me = members.find((m) => m.userId === session?.user.id);
@@ -68,7 +112,8 @@ export default function NewExpenseScreen() {
       setReceipt(result);
       if (result.estabelecimento && !description.trim()) setDescription(result.estabelecimento);
       if (result.valor_total) setAmountText(centsToInput(result.valor_total));
-      setOccurredAt(result.data);
+      // Data do recibo ao meio-dia UTC: evita "voltar um dia" no fuso do Brasil.
+      if (result.data) setOccurredAt(`${result.data}T12:00:00Z`);
     } catch (err) {
       setReceiptError(
         err instanceof PermissionDeniedError ? err.message : errorMessage(err, "Não foi possível ler o recibo."),
@@ -120,14 +165,15 @@ export default function NewExpenseScreen() {
 
     setSaving(true);
     try {
-      await groupsApi.createExpense(token, groupId, {
+      const body = {
         description: description.trim(),
         amountCents: amount,
         paidByMemberId: payerId,
-        // Data do recibo ao meio-dia UTC: evita "voltar um dia" no fuso do Brasil.
-        ...(occurredAt ? { occurredAt: `${occurredAt}T12:00:00Z` } : {}),
+        ...(occurredAt ? { occurredAt } : {}),
         split,
-      });
+      };
+      if (expense) await groupsApi.updateExpense(token, groupId, expense.id, body);
+      else await groupsApi.createExpense(token, groupId, body);
       router.back();
     } catch (err) {
       setFormError(errorMessage(err, "Não foi possível salvar a despesa."));
@@ -220,8 +266,12 @@ export default function NewExpenseScreen() {
       />
       {occurredAt ? (
         <View style={styles.itemRow}>
-          <Text style={{ color: c.textMuted, flex: 1 }}>Data do recibo: {formatDate(occurredAt)}</Text>
-          <SecondaryButton compact title="Usar hoje" onPress={() => setOccurredAt(null)} />
+          <Text style={{ color: c.textMuted, flex: 1 }}>Data: {formatDate(occurredAt)}</Text>
+          <SecondaryButton
+            compact
+            title="Usar hoje"
+            onPress={() => setOccurredAt(isEdit ? new Date().toISOString() : null)}
+          />
         </View>
       ) : null}
 
@@ -293,7 +343,7 @@ export default function NewExpenseScreen() {
         {errors.split ? <Text style={{ color: c.danger }}>{errors.split}</Text> : null}
       </View>
 
-      <PrimaryButton title="Salvar despesa" onPress={submit} loading={saving} />
+      <PrimaryButton title={isEdit ? "Salvar alterações" : "Salvar despesa"} onPress={submit} loading={saving} />
     </FormScreen>
   );
 }

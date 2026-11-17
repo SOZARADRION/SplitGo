@@ -12,14 +12,17 @@ Todas as rotas ficam sob `/api`, exceto `/health`. 🔒 = exige token; 👥 = ex
 | POST | `/api/auth/register` | cadastro `{ name, email, password }` → `{ token, user }` |
 | POST | `/api/auth/login` | login `{ email, password }` → `{ token, user }` |
 | GET | `/api/auth/me` 🔒 | usuário logado |
-| GET | `/api/groups` 🔒 | meus grupos (com `memberCount`) |
+| GET | `/api/groups` 🔒 | meus grupos, com `memberCount` e `myBalanceCents` (seu saldo no grupo: > 0 recebe, < 0 deve) |
 | POST | `/api/groups` 🔒 | cria grupo `{ name, currency?, members: [{ name, email? }] }` |
 | GET | `/api/groups/:groupId` 🔒👥 | grupo + participantes |
 | POST | `/api/groups/:groupId/members` 🔒👥 | adiciona participante `{ name, email? }` |
 | POST | `/api/groups/:groupId/expenses` 🔒👥 | lança despesa (ver abaixo) |
 | GET | `/api/groups/:groupId/expenses` 🔒👥 | lista despesas com as partes |
+| PUT | `/api/groups/:groupId/expenses/:expenseId` 🔒👥 | edita a despesa (mesmo corpo do lançamento; troca a divisão inteira de forma atômica) |
 | DELETE | `/api/groups/:groupId/expenses/:expenseId` 🔒👥 | exclui (soft delete) |
 | POST | `/api/groups/:groupId/settlements` 🔒👥 | registra pagamento `{ fromMemberId, toMemberId, amountCents }` |
+| GET | `/api/groups/:groupId/settlements` 🔒👥 | lista os pagamentos registrados |
+| DELETE | `/api/groups/:groupId/settlements/:settlementId` 🔒👥 | desfaz um pagamento (soft delete; o saldo volta a ficar em aberto) |
 | GET | `/api/groups/:groupId/summary` 🔒👥 | extrato: saldos + transferências simplificadas |
 | POST | `/api/receipts/parse` 🔒 | lê a foto/PDF de um recibo (ver abaixo) |
 

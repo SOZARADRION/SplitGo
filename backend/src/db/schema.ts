@@ -75,6 +75,8 @@ export const expenses = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** última edição (null = nunca editada) */
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
@@ -133,6 +135,8 @@ export const settlements = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     paidAt: timestamp("paid_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** acerto desfeito (exclusão lógica: o histórico é preservado) */
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
   },
   (t) => [
     check("settlements_amount_pos", sql`${t.amountCents} > 0`),

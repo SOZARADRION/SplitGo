@@ -3,8 +3,14 @@ import { z } from "zod";
 import type { Db } from "../db/client.js";
 import { AppError } from "../errors.js";
 import { getUserById } from "../services/auth.js";
-import { createSettlement, getGroupSummary } from "../services/balances.js";
-import { createExpense, deleteExpense, listExpenses } from "../services/expenses.js";
+import {
+  createSettlement,
+  deleteSettlement,
+  getGroupSummary,
+  listSettlements,
+  myBalancesByGroup,
+} from "../services/balances.js";
+import { createExpense, deleteExpense, listExpenses, updateExpense } from "../services/expenses.js";
 import { addMember, createGroup, getGroup, listGroupsForUser } from "../services/groups.js";
 
 // ---------- Esquemas de entrada ----------
@@ -61,6 +67,7 @@ const createSettlementBody = z.object({
 
 const groupParams = z.object({ groupId: id });
 const expenseParams = z.object({ groupId: id, expenseId: id });
+const settlementParams = z.object({ groupId: id, settlementId: id });
 
 // ---------- Rotas (todas exigem login) ----------
 
@@ -68,7 +75,13 @@ export async function groupRoutes(app: FastifyInstance, opts: { db: Db }) {
   const { db } = opts;
   app.addHook("onRequest", app.authenticate);
 
-  app.get("/groups", async (req) => listGroupsForUser(db, req.user.sub));
+  app.get("/groups", async (req) => {
+    const [list, balances] = await Promise.all([
+      listGroupsForUser(db, req.user.sub),
+      myBalancesByGroup(db, req.user.sub),
+    ]);
+    return list.map((g) => ({ ...g, myBalanceCents: balances.get(g.id) ?? 0 }));
+  });
 
   app.post("/groups", async (req, reply) => {
     const body = createGroupBody.parse(req.body);
@@ -106,6 +119,12 @@ export async function groupRoutes(app: FastifyInstance, opts: { db: Db }) {
       return listExpenses(db, groupId);
     });
 
+    scoped.put("/groups/:groupId/expenses/:expenseId", async (req) => {
+      const { groupId, expenseId } = expenseParams.parse(req.params);
+      const body = createExpenseBody.parse(req.body);
+      return updateExpense(db, groupId, expenseId, body);
+    });
+
     scoped.delete("/groups/:groupId/expenses/:expenseId", async (req, reply) => {
       const { groupId, expenseId } = expenseParams.parse(req.params);
       await deleteExpense(db, groupId, expenseId);
@@ -117,6 +136,17 @@ export async function groupRoutes(app: FastifyInstance, opts: { db: Db }) {
       const body = createSettlementBody.parse(req.body);
       reply.code(201);
       return createSettlement(db, groupId, body, req.user.sub);
+    });
+
+    scoped.get("/groups/:groupId/settlements", async (req) => {
+      const { groupId } = groupParams.parse(req.params);
+      return listSettlements(db, groupId);
+    });
+
+    scoped.delete("/groups/:groupId/settlements/:settlementId", async (req, reply) => {
+      const { groupId, settlementId } = settlementParams.parse(req.params);
+      await deleteSettlement(db, groupId, settlementId);
+      reply.code(204);
     });
 
     scoped.get("/groups/:groupId/summary", async (req) => {
