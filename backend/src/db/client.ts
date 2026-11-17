@@ -1,3 +1,4 @@
+import { mkdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
@@ -31,6 +32,8 @@ export async function openDb(opts: { databaseUrl?: string; dataDir?: string } = 
     return { db: db as unknown as Db, close: () => pool.end() };
   }
 
+  // O PGlite não cria pastas intermediárias (ex.: "data/" na primeira execução).
+  if (opts.dataDir) mkdirSync(opts.dataDir, { recursive: true });
   const client = new PGlite(opts.dataDir);
   const db = drizzlePglite(client, { schema });
   await migratePglite(db, { migrationsFolder });

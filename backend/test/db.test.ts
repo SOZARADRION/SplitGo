@@ -56,3 +56,20 @@ describe("restrições do banco", () => {
     ).rejects.toThrow();
   });
 });
+
+describe("banco em disco (PGlite)", () => {
+  it("cria as pastas que faltam na primeira execução", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const base = mkdtempSync(join(tmpdir(), "splitgo-"));
+    const dataDir = join(base, "data", "pglite"); // "data" ainda não existe
+    try {
+      const h = await openDb({ dataDir });
+      await h.close();
+      expect(existsSync(dataDir)).toBe(true);
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  }, 30_000); // criar banco em disco é lento com a suíte em paralelo
+});
